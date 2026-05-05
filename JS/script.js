@@ -21,6 +21,68 @@ let faturaAktuale    = [];
 let kamarieriZgjedhur = "";
 let tavolinaZgjedhur  = 0;
 
+let tableStates = JSON.parse(localStorage.getItem("barazo_table_states")) || {};
+
+function siguroStatusinETavoline() {
+    for (let i = 1; i <= TOTAL_TABLES; i++) {
+        const key = String(i);
+        if (!tableStates[key]) {
+            tableStates[key] = {
+                status: "free",
+                waiter: "",
+                order: [],
+                savedAt: null
+            };
+        }
+    }
+}
+
+function ruajTavolina() {
+    localStorage.setItem("barazo_table_states", JSON.stringify(tableStates));
+}
+
+function getTabelaState(id) {
+    const key = String(id);
+    if (!tableStates[key]) {
+        tableStates[key] = {
+            status: "free",
+            waiter: "",
+            order: [],
+            savedAt: null
+        };
+    }
+    return tableStates[key];
+}
+
+function clearTabelaState(id) {
+    const key = String(id);
+    tableStates[key] = {
+        status: "free",
+        waiter: "",
+        order: [],
+        savedAt: null
+    };
+    ruajTavolina();
+}
+
+function rifreskoAksionetCart() {
+    const saveBtn  = document.getElementById("btn-save-order");
+    const payBtn   = document.getElementById("btn-pay-order");
+    const printBtn = document.getElementById("btn-print-pay");
+    const hasOrder = faturaAktuale.length > 0;
+    const validSelection = kamarieriZgjedhur && tavolinaZgjedhur;
+
+    if (saveBtn) {
+        saveBtn.disabled = !(validSelection && hasOrder);
+    }
+    if (payBtn) {
+        payBtn.disabled = !(validSelection && hasOrder);
+    }
+    if (printBtn) {
+        printBtn.disabled = !(validSelection && hasOrder);
+    }
+}
+
 // ── MENU DATA ─────────────────────────────────────────────
 const menuDizajni = {
     "Kafe": [
@@ -225,6 +287,7 @@ function shfaqTab(tab) {
     }
 
     if (tab === "pos") {
+        siguroStatusinETavoline();
         // Show step 1 (selection) or step 2 depending on state
         if (kamarieriZgjedhur && tavolinaZgjedhur) {
             tregoPasin(2);
@@ -283,6 +346,7 @@ function rifreskoStaffGrid() {
             kamarieriZgjedhur = (kamarieriZgjedhur === p) ? "" : p;
             rifreskoStaffGrid();
             rifreshoProceedBar();
+            autoProceedIfSelectionComplete();
         };
         grid.appendChild(btn);
     });
@@ -295,19 +359,30 @@ function rifreskoTableGrid() {
     grid.innerHTML = "";
 
     for (let i = 1; i <= TOTAL_TABLES; i++) {
+        const state = getTabelaState(i);
+        const occupied = state.status === "occupied" && state.order.length > 0;
         const card = document.createElement("button");
         card.type = "button";
-        card.className = "table-card" + (tavolinaZgjedhur === i ? " selected" : "");
+        card.className = "table-card" + (tavolinaZgjedhur === i ? " selected" : "") + (occupied ? " occupied" : "");
         card.setAttribute("aria-pressed", tavolinaZgjedhur === i ? "true" : "false");
         card.setAttribute("aria-label", `Tavolina ${i}`);
         card.innerHTML = `
             <span class="table-card-num">${i}</span>
-            <span class="table-card-label">Tryeza</span>
+            <span class="table-card-label">Tavolina</span>
+            <span class="table-card-status">${occupied ? `E zënë · ${state.order.length} artikuj` : "E lirë"}</span>
         `;
         card.onclick = () => {
             tavolinaZgjedhur = (tavolinaZgjedhur === i) ? 0 : i;
+            if (tavolinaZgjedhur) {
+                const selectedState = getTabelaState(tavolinaZgjedhur);
+                faturaAktuale = [...selectedState.order];
+                if (!kamarieriZgjedhur && selectedState.waiter) {
+                    kamarieriZgjedhur = selectedState.waiter;
+                }
+            }
             rifreskoTableGrid();
             rifreshoProceedBar();
+            autoProceedIfSelectionComplete();
         };
         grid.appendChild(card);
     }
@@ -317,10 +392,13 @@ function rifreskoTableGrid() {
 function rifreshoProceedBar() {
     const btn     = document.getElementById("btn-proceed");
     const summary = document.getElementById("selection-summary");
-    if (!btn || !summary) return;
+    if (!summary) return;
+
+    if (btn) {
+        btn.disabled = !(kamarieriZgjedhur && tavolinaZgjedhur);
+    }
 
     if (kamarieriZgjedhur && tavolinaZgjedhur) {
-        btn.disabled = false;
         summary.innerHTML = `
             <div class="summary-active">
                 <span class="summary-tag summary-tag-waiter">
@@ -334,7 +412,6 @@ function rifreshoProceedBar() {
             </div>
         `;
     } else {
-        btn.disabled = true;
         let msg = "Zgjidhni kamarierin dhe tavolinën për të vazhduar";
         if (kamarieriZgjedhur && !tavolinaZgjedhur) msg = `${kamarieriZgjedhur} ✓ — Zgjidhni tani tavolinën`;
         else if (!kamarieriZgjedhur && tavolinaZgjedhur) msg = `Tavolina #${tavolinaZgjedhur} ✓ — Zgjidhni tani kamarierin`;
@@ -342,9 +419,16 @@ function rifreshoProceedBar() {
     }
 }
 
-function vazhdoTePorosia() {
+function autoProceedIfSelectionComplete() {
     if (!kamarieriZgjedhur || !tavolinaZgjedhur) return;
+
+    const stepSelection = document.getElementById("step-selection");
+    if (!stepSelection || stepSelection.classList.contains("hidden")) return;
+
+    const selectedState = getTabelaState(tavolinaZgjedhur);
+    faturaAktuale = [...selectedState.order];
     tregoPasin(2);
+    rifreskoFaturen();
 }
 
 function ktheTeZgjedhja() {
@@ -484,11 +568,67 @@ function rifreskoFaturen() {
         void totalEl.offsetWidth;
         totalEl.classList.add("bump");
     }
+    rifreskoAksionetCart();
 }
 
 function hiqNgaFatura(i) {
     faturaAktuale.splice(i, 1);
     rifreskoFaturen();
+}
+
+// ── RESET SESSION STATE ───────────────────────────────────────
+function resetSessionState() {
+    faturaAktuale = [];
+    kamarieriZgjedhur = "";
+    tavolinaZgjedhur = 0;
+    rifreskoFaturen();
+    rifreskoAksionetCart();
+    rifreskoCartLabel();
+}
+
+function createInvoicePayload() {
+    const now = new Date();
+    const saleId = Date.now();
+    const grandTotal = faturaAktuale.reduce((s, i) => s + i.cmimi, 0);
+
+    return {
+        id:        saleId,
+        punetori:  kamarieriZgjedhur,
+        tavolina:  tavolinaZgjedhur,
+        produktet: [...faturaAktuale],
+        total:     grandTotal,
+        koha:      now.toLocaleTimeString("sq-AL", { hour: "2-digit", minute: "2-digit" }),
+        data:      now.toLocaleDateString("sq-AL", { day: "2-digit", month: "2-digit", year: "numeric" })
+    };
+}
+
+function mbyllFaturen() {
+    document.getElementById("receipt-overlay").classList.add("hidden");
+    tregoPasin(1);
+    rifreskoUI();
+}
+
+function handlePaymentSubmission({ showReceipt = false } = {}) {
+    const invoice = createInvoicePayload();
+    faturatEPerfunduara.push(invoice);
+    ruajFaturat();
+    clearTabelaState(tavolinaZgjedhur);
+    rifreskoTableGrid();
+    rifreskoAksionetCart();
+
+    if (showReceipt) {
+        resetSessionState();
+        hapiFaturen({ ...invoice, grandTotal: invoice.total, now: new Date(), timeStr: invoice.koha });
+        showToast(`✓ Fatura po përgatitet.`, "success");
+        return;
+    }
+
+    resetSessionState();
+    showToast(`✓ Porosia u pagua. Tavolina #${invoice.tavolina} është e lirë.`, "success");
+    setTimeout(() => {
+        tregoPasin(1);
+        rifreskoUI();
+    }, 700);
 }
 
 // ── CONFIRM ORDER & RECEIPT ───────────────────────────────────
@@ -506,25 +646,63 @@ function konfirmoPorosine() {
         return;
     }
 
-    const now       = new Date();
-    const saleId    = Date.now();
-    const grandTotal = faturaAktuale.reduce((s, i) => s + i.cmimi, 0);
-    const timeStr   = now.toLocaleTimeString("sq-AL", { hour: "2-digit", minute: "2-digit" });
-
-    const fatura = {
-        id:        saleId,
-        punetori:  kamarieriZgjedhur,
-        tavolina:  tavolinaZgjedhur,
-        produktet: [...faturaAktuale],
-        total:     grandTotal,
-        koha:      timeStr,
-        data:      now.toLocaleDateString("sq-AL", { day: "2-digit", month: "2-digit", year: "numeric" })
+    const now = new Date();
+    tableStates[String(tavolinaZgjedhur)] = {
+        status: "occupied",
+        waiter: kamarieriZgjedhur,
+        order: [...faturaAktuale],
+        savedAt: now.toISOString()
     };
+    ruajTavolina();
+    rifreskoTableGrid();
+    rifreskoAksionetCart();
 
-    faturatEPerfunduara.push(fatura);
-    ruajFaturat();
+    const saveBtn = document.getElementById("btn-save-order");
+    if (saveBtn) {
+        saveBtn.classList.add("success-tick");
+        setTimeout(() => saveBtn.classList.remove("success-tick"), 900);
+    }
+    showToast(`✓ Porosia u ruajt. Tavolina #${tavolinaZgjedhur} është e zënë.`, "success");
 
-    hapiFaturen({ ...fatura, grandTotal, now, timeStr });
+    setTimeout(() => {
+        resetSessionState();
+        tregoPasin(1);
+        rifreskoUI();
+    }, 700);
+}
+
+function paguajPorosine() {
+    if (!kamarieriZgjedhur) {
+        showToast("⚠️ Nuk ka kamarier të zgjedhur!", "warning");
+        return;
+    }
+    if (!tavolinaZgjedhur) {
+        showToast("⚠️ Nuk ka tavolinë të zgjedhur!", "warning");
+        return;
+    }
+    if (faturaAktuale.length === 0) {
+        showToast("⚠️ Shto produkte në porosinë!", "warning");
+        return;
+    }
+
+    handlePaymentSubmission({ showReceipt: false });
+}
+
+function gjeneroFaturenFinale() {
+    if (!kamarieriZgjedhur) {
+        showToast("⚠️ Nuk ka kamarier të zgjedhur!", "warning");
+        return;
+    }
+    if (!tavolinaZgjedhur) {
+        showToast("⚠️ Nuk ka tavolinë të zgjedhur!", "warning");
+        return;
+    }
+    if (faturaAktuale.length === 0) {
+        showToast("⚠️ Shto produkte në porosinë!", "warning");
+        return;
+    }
+
+    handlePaymentSubmission({ showReceipt: true });
 }
 
 /* ── Populate and show the receipt modal ── */
@@ -573,16 +751,11 @@ function hapiFaturen({ id, punetori, tavolina, produktet, grandTotal, now, timeS
 
 function printReceipt() {
     window.print();
+    mbyllFaturen();
 }
 
 function porosi_e_re() {
-    document.getElementById("receipt-overlay").classList.add("hidden");
-    faturaAktuale = [];
-    // Reset selection for next order
-    kamarieriZgjedhur = "";
-    tavolinaZgjedhur  = 0;
-    rifreskoFaturen();
-    tregoPasin(1);
+    mbyllFaturen();
 }
 
 // ── ADMIN — STAFF MANAGEMENT ──────────────────────────────────
@@ -745,8 +918,18 @@ function editoFaturen(id) {
         kamarieriZgjedhur = f.punetori;
         tavolinaZgjedhur  = f.tavolina || 0;
         faturatEPerfunduara = faturatEPerfunduara.filter(x => x.id !== id);
-        ruajFaturat();
 
+        if (tavolinaZgjedhur) {
+            tableStates[String(tavolinaZgjedhur)] = {
+                status: "occupied",
+                waiter: kamarieriZgjedhur,
+                order: [...f.produktet],
+                savedAt: new Date().toISOString()
+            };
+            ruajTavolina();
+        }
+
+        ruajFaturat();
         shfaqTab("pos");
         setTimeout(() => {
             rifreskoFaturen();
